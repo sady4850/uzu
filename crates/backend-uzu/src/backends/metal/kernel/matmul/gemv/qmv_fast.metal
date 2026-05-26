@@ -27,7 +27,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const QuantizationMethod quant_method SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
-    threadgroup half codebook_tg[8 * 16],
+    threadgroup half codebook_tg[8 * (1 << BITS)],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
     const uint simd_lane THREADS(32),
@@ -77,13 +77,11 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   input += batch_idx * in_vec_size + simd_lane * values_per_thread;
   output += batch_idx * out_vec_size + out_row;
 
-  threadgroup half* codebook_values = codebook_tg;
+  threadgroup half* codebook_values;
   if (quant_method == QuantizationMethod::Codebook) {
     if constexpr (BITS == 4) {
       constexpr uint codebook_size = 1u << BITS;
-      threadgroup half(*codebook_tg_by_simdgroup)[codebook_size] =
-          reinterpret_cast<threadgroup half(*)[codebook_size]>(codebook_tg);
-      codebook_values = codebook_tg_by_simdgroup[simd_group];
+      codebook_values = codebook_tg + simd_group * codebook_size;
       for (uint entry = simd_lane; entry < codebook_size;
            entry += METAL_SIMD_SIZE) {
         codebook_values[entry] = codebook[entry];
