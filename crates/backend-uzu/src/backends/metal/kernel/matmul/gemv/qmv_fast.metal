@@ -8,7 +8,7 @@
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
 
-constexpr constant uint NUM_SIMDGROUPS = 8;
+#define NUM_SIMDGROUPS 8
 
 template <typename T, uint GROUP_SIZE, uint BITS>
 VARIANTS(T, float, half, bfloat)
