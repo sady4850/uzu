@@ -144,6 +144,11 @@ impl<B: Backend> LinearMatmul<B> {
                     .validate(&[output_dim, expected_zero_points_entries], storage_type)?
                     .read_allocation()?
             },
+            QuantizationMethod::Codebook => {
+                return Err(LinearMatmulError::UnsupportedConfiguration(
+                    "codebook linear matmul loading is not implemented".to_string(),
+                ));
+            },
         };
 
         let biases = load_biases(data_type, output_dim, bias_tree)?;
@@ -225,6 +230,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                     mode: *mode,
                     group_size: *group_size,
                 },
+                QuantizationMethod::Codebook => unreachable!("codebook linear matmul loading is not implemented"),
             },
         };
 

@@ -119,6 +119,14 @@ impl GemmKernel {
         path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        if matches!(arguments.b, MatmulB::CodebookDequant { .. }) {
+            return Err(MatmulError::UnsupportedFeature {
+                feature: "codebook GEMM",
+                reason: "codebook GEMM is not implemented",
+            }
+            .into());
+        }
+
         let use_mxu = match path {
             GemmDispatchPath::Mxu => {
                 assert!(
@@ -335,6 +343,15 @@ impl GemmKernel {
                     group_count_y,
                     encoder,
                 );
+            },
+            MatmulB::CodebookDequant {
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedFeature {
+                    feature: "codebook GEMM",
+                    reason: "codebook GEMM is not implemented",
+                }
+                .into());
             },
         }
 

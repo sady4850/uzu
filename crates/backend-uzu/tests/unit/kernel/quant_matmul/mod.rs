@@ -2,6 +2,7 @@
 #[path = "../../../common/mod.rs"]
 mod common;
 
+mod qmv_fast_codebook_test;
 mod qmv_fast_test;
 mod qmv_test;
 

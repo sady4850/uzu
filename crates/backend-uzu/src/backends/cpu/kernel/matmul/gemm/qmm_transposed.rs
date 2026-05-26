@@ -66,6 +66,7 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                             let bias_t = *biases.unwrap().add(j * num_groups_k + group_idx);
                             scale_t.to_f32().unwrap() * val_q + bias_t.to_f32().unwrap()
                         },
+                        QuantizationMethod::Codebook => unreachable!("codebook GEMM is not implemented"),
                     };
 
                     acc += val_a * w_dequant_f32;

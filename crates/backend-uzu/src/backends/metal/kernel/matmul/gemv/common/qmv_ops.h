@@ -10,7 +10,12 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-template <typename T, typename U, int VALUES_PER_THREAD, int BITS>
+template <
+    typename T,
+    typename U,
+    int VALUES_PER_THREAD,
+    int BITS,
+    bool SUM = true>
 inline U load_vector(const device T* x, thread U* x_thread) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
@@ -19,7 +24,9 @@ inline U load_vector(const device T* x, thread U* x_thread) {
   thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
   for (int i = 0; i < VALUES_PER_THREAD / 4; i++) {
     U4 v = U4(x[4 * i], x[4 * i + 1], x[4 * i + 2], x[4 * i + 3]);
-    sum += v[0] + v[1] + v[2] + v[3];
+    if constexpr (SUM) {
+      sum += v[0] + v[1] + v[2] + v[3];
+    }
     x_vec4[i] = v;
   }
   return sum;
@@ -106,6 +113,33 @@ inline U qdot(
     }
   }
   return scale * accumulator + sum * bias;
+}
+
+template <typename U, int VALUES_PER_THREAD, int BITS>
+inline U qdot_codebook(
+    const device uint8_t* w,
+    const thread U* x_thread,
+    const threadgroup half* codebook,
+    U scale
+) {
+  static_assert(BITS == 4, "Only int4 codebook QMV is supported");
+
+  using U4 = vec<U, 4>;
+  U accumulator = 0;
+  const device ushort* weight_words = reinterpret_cast<const device ushort*>(w);
+  const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
+
+  for (int value_idx = 0; value_idx < (VALUES_PER_THREAD / 4); value_idx++) {
+    uint weight_word = weight_words[value_idx];
+    U4 weight_vec4 =
+        U4(static_cast<U>(codebook[weight_word & 0x0fu]),
+           static_cast<U>(codebook[(weight_word >> 4) & 0x0fu]),
+           static_cast<U>(codebook[(weight_word >> 8) & 0x0fu]),
+           static_cast<U>(codebook[(weight_word >> 12) & 0x0fu]));
+    accumulator += dot(x_vec4[value_idx], weight_vec4);
+  }
+
+  return scale * accumulator;
 }
 
 template <typename U, int VALUES_PER_THREAD, int BITS>

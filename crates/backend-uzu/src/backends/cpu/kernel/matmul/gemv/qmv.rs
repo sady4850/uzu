@@ -16,6 +16,7 @@ pub fn qmv<T: ArrayElement + Float>(
     scales: *const T,
     zero_points: Option<*const u8>,
     biases: Option<*const T>,
+    codebook: Option<*const f16>,
     input: *const T,
     output: *mut T,
     in_vec_size: usize,
@@ -38,7 +39,6 @@ pub fn qmv<T: ArrayElement + Float>(
     } else {
         4
     };
-
     unsafe {
         for i in 0..batch_size {
             for j in 0..out_vec_size {
@@ -51,11 +51,11 @@ pub fn qmv<T: ArrayElement + Float>(
                     let val_q = if bits == 4 {
                         let u32_idx = weight_linear_idx / pack_factor;
                         let bit_offset = (weight_linear_idx % pack_factor) * 4;
-                        ((weights.add(u32_idx).read_unaligned() >> bit_offset) & 0xF) as f32
+                        ((weights.add(u32_idx).read_unaligned() >> bit_offset) & 0xF) as usize
                     } else {
                         let u32_idx = weight_linear_idx / pack_factor;
                         let byte_offset = (weight_linear_idx % pack_factor) * 8;
-                        ((weights.add(u32_idx).read_unaligned() >> byte_offset) & 0xFF) as f32
+                        ((weights.add(u32_idx).read_unaligned() >> byte_offset) & 0xFF) as usize
                     };
 
                     let val_a = (*input.add(i * in_vec_size + l)).to_f32().unwrap();
@@ -64,7 +64,7 @@ pub fn qmv<T: ArrayElement + Float>(
                     let group_idx = l / group_size;
                     let scale = (*scales.add(j * num_groups_k + group_idx)).to_f32().unwrap();
 
-                    let bias = match quant_method {
+                    let val_b = match quant_method {
                         QuantizationMethod::ScaleZeroPoint => {
                             let zp = zero_points.unwrap();
                             // Zero points are [N, zp_stride_k]
@@ -79,15 +79,21 @@ pub fn qmv<T: ArrayElement + Float>(
                             } else {
                                 *zp.add(j * zp_stride + group_idx) as f32
                             };
-                            -scale * zp_val
+                            scale * (val_q as f32 - zp_val)
                         },
                         QuantizationMethod::ScaleBias => {
                             // Biases are [N, num_groups_k]
-                            (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap()
+                            let bias = (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap();
+                            scale * val_q as f32 + bias
+                        },
+                        QuantizationMethod::Codebook => {
+                            let codebook_value =
+                                (*codebook.expect("Codebook quantized QMV requires a codebook").add(val_q)).to_f32();
+                            scale * codebook_value
                         },
                     };
 
-                    acc += val_a * (scale * val_q + bias);
+                    acc += val_a * val_b;
                 }
 
                 *output.add(i * out_vec_size + j) = T::from(acc).unwrap();
@@ -117,6 +123,7 @@ pub fn quantized_matmul_qmv<T: ArrayElement + Float, const GROUP_SIZE: u32, cons
         scales,
         zero_points,
         biases,
+        None,
         input,
         output,
         in_vec_size as usize,

@@ -61,6 +61,9 @@ impl MatmulKernel for MatmulCpuKernel {
             }
             | MatmulB::ScaleZeroPointDequant {
                 ..
+            }
+            | MatmulB::CodebookDequant {
+                ..
             } => Ok(self.encode_quant(arguments, encoder)?),
         }
     }
@@ -230,6 +233,10 @@ impl MatmulCpuKernel {
             | MatmulB::ScaleZeroPointDequant {
                 group_size,
                 ..
+            }
+            | MatmulB::CodebookDequant {
+                group_size,
+                ..
             } => group_size,
             MatmulB::FullPrecision {
                 ..
@@ -241,6 +248,13 @@ impl MatmulCpuKernel {
 
         let post_rht = arguments.d_transform.rht_factors;
         let post_bias = arguments.d_transform.bias;
+
+        if matches!(arguments.b, MatmulB::CodebookDequant { .. }) && arguments.m >= 5 {
+            return Err(MatmulError::UnsupportedFeature {
+                feature: "codebook GEMM",
+                reason: "codebook GEMM is not implemented",
+            });
+        }
 
         if arguments.m >= 5 && arguments.n > 1 {
             assert!(
@@ -317,6 +331,63 @@ impl MatmulCpuKernel {
             MatmulB::FullPrecision {
                 ..
             } => unreachable!(),
+            MatmulB::CodebookDequant {
+                b: weights,
+                scales,
+                codebook,
+                mode,
+                group_size,
+            } => {
+                if hadamard_factors.is_some() {
+                    return Err(MatmulError::UnsupportedDOp {
+                        bit: GemmDTransform::RHT,
+                        path: "MatmulCpuKernel/Quant",
+                    });
+                }
+                let bits = match mode {
+                    QuantizationMode::U4 => 4u32,
+                    QuantizationMode::I8 | QuantizationMode::U8 => {
+                        return Err(MatmulError::UnsupportedFeature {
+                            feature: "codebook QMV",
+                            reason: "only 4-bit codebook QMV is supported",
+                        });
+                    },
+                };
+                if k % 512 != 0 || n % 32 != 0 {
+                    return Err(MatmulError::UnsupportedFeature {
+                        feature: "codebook QMV",
+                        reason: "requires k divisible by 512 and n divisible by 32",
+                    });
+                }
+                let kernel =
+                    <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                        encoder.context(),
+                        self.data_type,
+                        group_size,
+                        bits,
+                        QuantizationMethod::Codebook,
+                        false,
+                    )
+                    .map_err(MatmulError::BackendError)?;
+                kernel.encode(
+                    weights,
+                    scales,
+                    None::<&Allocation<Cpu>>,
+                    None::<&Allocation<Cpu>>,
+                    Some(codebook),
+                    (a, a_offset),
+                    &mut *d,
+                    None::<&Allocation<Cpu>>,
+                    k,
+                    n,
+                    m,
+                    encoder,
+                );
+                if let Some(bias) = post_bias {
+                    self.bias_add.encode(None::<&Allocation<Cpu>>, bias, d, n, m * n, encoder);
+                }
+                return Ok(());
+            },
         };
 
         let bits = match mode {
@@ -327,6 +398,7 @@ impl MatmulCpuKernel {
         let (zero_points, biases) = match method {
             QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
             QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
+            QuantizationMethod::Codebook => unreachable!(),
         };
 
         let context = encoder.context();
@@ -346,6 +418,7 @@ impl MatmulCpuKernel {
                 scales,
                 zero_points,
                 biases,
+                None::<&Allocation<Cpu>>,
                 (a, a_offset),
                 &mut *d,
                 hadamard_factors,

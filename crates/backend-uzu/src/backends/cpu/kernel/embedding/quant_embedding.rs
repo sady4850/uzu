@@ -113,6 +113,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                         .read()
                         .to_f32()
                         .unwrap(),
+                    QuantizationMethod::Codebook => unreachable!("codebook embedding lookup is not implemented"),
                 };
 
                 let out_f = scale.to_f32().unwrap() * quantized_value as f32 + bias;

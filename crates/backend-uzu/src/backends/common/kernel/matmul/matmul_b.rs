@@ -24,6 +24,13 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
         mode: QuantizationMode,
         group_size: u32,
     },
+    CodebookDequant {
+        b: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+        codebook: &'a Allocation<B>,
+        mode: QuantizationMode,
+        group_size: u32,
+    },
 }
 
 impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
@@ -38,6 +45,9 @@ impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
             Self::ScaleZeroPointDequant {
                 ..
             } => GemmWeightPrologueKind::ScaleZeroPointDequant,
+            Self::CodebookDequant {
+                ..
+            } => GemmWeightPrologueKind::CodebookDequant,
         }
     }
 
@@ -51,6 +61,10 @@ impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
                 ..
             }
             | Self::ScaleZeroPointDequant {
+                mode,
+                ..
+            }
+            | Self::CodebookDequant {
                 mode,
                 ..
             } => Some(DataType::from(*mode).size_in_bits() as u32),
@@ -67,6 +81,10 @@ impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
                 ..
             }
             | Self::ScaleZeroPointDequant {
+                group_size,
+                ..
+            }
+            | Self::CodebookDequant {
                 group_size,
                 ..
             } => Some(*group_size),

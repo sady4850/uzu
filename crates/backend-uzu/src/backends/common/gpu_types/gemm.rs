@@ -7,6 +7,7 @@ pub enum GemmWeightPrologueKind {
     FullPrecision,
     ScaleBiasDequant,
     ScaleZeroPointDequant,
+    CodebookDequant,
 }
 
 bitflags! {

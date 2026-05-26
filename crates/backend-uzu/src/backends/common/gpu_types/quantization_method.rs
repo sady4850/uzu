@@ -9,6 +9,8 @@ pub enum QuantizationMethod {
     ScaleBias,
     #[serde(rename = "awq")]
     ScaleZeroPoint,
+    #[serde(rename = "codebook")]
+    Codebook,
 }
 
 impl fmt::Display for QuantizationMethod {

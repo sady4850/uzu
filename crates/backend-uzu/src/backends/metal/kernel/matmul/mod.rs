@@ -162,7 +162,19 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+        let is_codebook = matches!(arguments.b, MatmulB::CodebookDequant { .. });
+        if is_codebook && arguments.m >= 5 {
+            return Err(MatmulError::UnsupportedFeature {
+                feature: "codebook GEMM",
+                reason: "codebook GEMM is not implemented",
+            }
+            .into());
+        }
+
+        let is_quant = matches!(
+            arguments.b,
+            MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. } | MatmulB::CodebookDequant { .. }
+        );
         let gemv_eligible = if is_quant {
             arguments.m < 5 || arguments.n == 1
         } else {

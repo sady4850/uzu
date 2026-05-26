@@ -4,8 +4,8 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder, Kernels, gpu_types::QuantizationMethod,
-
+            Allocation, Backend, Context, Encoder, Kernels,
+            gpu_types::QuantizationMethod,
             kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
         },
         cpu::Cpu,
@@ -83,6 +83,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         &scales_buf,
         zp_buf.as_ref(),
         bias_buf.as_ref(),
+        None::<&Allocation<B>>,
         &x_buf,
         &mut y_buf,
         None::<&Allocation<B>>,
@@ -163,6 +164,7 @@ fn get_test_data<T: ArrayElement + Float>(
             let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
             (None, Some(biases))
         },
+        QuantizationMethod::Codebook => unreachable!("use qmv_fast codebook tests for codebook quantization"),
     };
 
     let mut x_f32: Vec<f32> = Vec::with_capacity(m * k);

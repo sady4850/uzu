@@ -132,6 +132,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
             let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
             (None, Some(biases))
         },
+        QuantizationMethod::Codebook => unreachable!("use qmv_fast codebook tests for codebook quantization"),
     };
 
     // X: [m × k]
@@ -195,6 +196,7 @@ fn get_test_data_edge<T: ArrayElement + Float>(
             let biases: Vec<T> = vec![T::zero(); n * num_groups_k];
             (None, Some(biases))
         },
+        QuantizationMethod::Codebook => unreachable!("use qmv_fast codebook tests for codebook quantization"),
     };
 
     // X: simple increasing values
