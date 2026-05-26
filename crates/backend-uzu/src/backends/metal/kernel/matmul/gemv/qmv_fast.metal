@@ -8,6 +8,8 @@
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
 
+constexpr constant uint NUM_SIMDGROUPS = 8;
+
 template <typename T, uint GROUP_SIZE, uint BITS>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
@@ -27,14 +29,13 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const QuantizationMethod quant_method SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
-    threadgroup half codebook_tg[8 * (1 << BITS)],
+    threadgroup half codebook_tg[NUM_SIMDGROUPS][1 << BITS],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
     const uint simd_lane THREADS(32),
-    const uint simd_group THREADS(8)
+    const uint simd_group THREADS(NUM_SIMDGROUPS)
 ) {
   constexpr uint packs_per_thread = BITS == 2 ? 1 : 2;
-  constexpr uint num_simdgroups = 8;
   constexpr uint results_per_simdgroup = 4;
   constexpr uint pack_factor = get_pack_factor<BITS, 32>();
   constexpr uint bytes_per_pack = get_bytes_per_pack<BITS, 32>();
@@ -49,7 +50,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   const uint in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
   const uint in_vec_size_g = in_vec_size / GROUP_SIZE;
   const uint out_row =
-      out_block_idx * (num_simdgroups * results_per_simdgroup) +
+      out_block_idx * (NUM_SIMDGROUPS * results_per_simdgroup) +
       simd_group * results_per_simdgroup;
   ws += out_row * in_vec_size_w + simd_lane * packs_per_thread * bytes_per_pack;
   scales += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
@@ -77,14 +78,14 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   input += batch_idx * in_vec_size + simd_lane * values_per_thread;
   output += batch_idx * out_vec_size + out_row;
 
-  threadgroup half* codebook_values;
+  threadgroup half* codebook_sg;
   if (quant_method == QuantizationMethod::Codebook) {
     if constexpr (BITS == 4) {
       constexpr uint codebook_size = 1u << BITS;
-      codebook_values = codebook_tg + simd_group * codebook_size;
+      codebook_sg = codebook_tg[simd_group];
       for (uint entry = simd_lane; entry < codebook_size;
            entry += METAL_SIMD_SIZE) {
-        codebook_values[entry] = codebook[entry];
+        codebook_sg[entry] = codebook[entry];
       }
       simdgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -116,25 +117,25 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[0] += qdot_codebook<U, values_per_thread, BITS>(
             wl0,
             x_thread,
-            codebook_values,
+            codebook_sg,
             s0
         );
         result[1] += qdot_codebook<U, values_per_thread, BITS>(
             wl1,
             x_thread,
-            codebook_values,
+            codebook_sg,
             s1
         );
         result[2] += qdot_codebook<U, values_per_thread, BITS>(
             wl2,
             x_thread,
-            codebook_values,
+            codebook_sg,
             s2
         );
         result[3] += qdot_codebook<U, values_per_thread, BITS>(
             wl3,
             x_thread,
-            codebook_values,
+            codebook_sg,
             s3
         );
       }
