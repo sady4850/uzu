@@ -3,7 +3,7 @@ use backend_uzu::{
     backends::common::{
         Allocation, Backend, Context, Kernels,
         gpu_types::QuantizationMethod,
-        kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
+        kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQmvLloydMaxKernel},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -12,7 +12,7 @@ use num_traits::Float;
 
 use crate::{
     common::{
-        matmul::{CodebookQuantBuffers, CodebookQuantInput, QuantBuffers, QuantInput, Shape, iter_encode_loop},
+        matmul::{LloydMaxQuantBuffers, LloydMaxQuantInput, QuantBuffers, QuantInput, Shape, iter_encode_loop},
         type_short_name,
     },
     uzu_bench,
@@ -101,7 +101,6 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                     &buffers.scales,
                     buffers.zp.as_ref(),
                     buffers.bias.as_ref(),
-                    None::<&Allocation<B>>,
                     &buffers.x,
                     &mut buffers.y,
                     None::<&Allocation<B>>,
@@ -115,7 +114,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
     }
 }
 
-fn bench_qmv_fast_codebook_typed<B: Backend, T: ArrayElement + Float>(
+fn bench_qmv_lloyd_max_typed<B: Backend, T: ArrayElement + Float>(
     c: &mut Criterion,
     context: &B::Context,
     label: &str,
@@ -125,16 +124,14 @@ fn bench_qmv_fast_codebook_typed<B: Backend, T: ArrayElement + Float>(
 
     for shape in qmv_benchmark_shapes() {
         let (m, k, n) = (shape.m, shape.k, shape.n);
-        let input = CodebookQuantInput::<T>::new(m, k, n, group_size);
-        let mut buffers = CodebookQuantBuffers::<B, T>::allocate(context, &input);
+        let input = LloydMaxQuantInput::<T>::new(m, k, n, group_size);
+        let mut buffers = LloydMaxQuantBuffers::<B, T>::allocate(context, &input);
 
-        let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+        let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel::new(
             context,
             T::data_type(),
             group_size,
             4,
-            QuantizationMethod::Codebook,
-            false,
         )
         .unwrap();
 
@@ -144,12 +141,11 @@ fn bench_qmv_fast_codebook_typed<B: Backend, T: ArrayElement + Float>(
                 kernel.encode(
                     &buffers.w,
                     &buffers.scales,
-                    None::<&Allocation<B>>,
-                    None::<&Allocation<B>>,
-                    Some(&buffers.codebook),
+                    &buffers.codebook,
+                    &buffers.bias_indices,
+                    &buffers.bias_codebook,
                     &buffers.x,
                     &mut buffers.y,
-                    None::<&Allocation<B>>,
                     input.k,
                     input.n,
                     input.m,
@@ -174,7 +170,7 @@ fn bench_qmv_fast(c: &mut Criterion) {
         bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
         bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
         bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleZeroPoint);
-        bench_qmv_fast_codebook_typed::<B, bf16>(c, &context, "NF4_BF16_gs64", 64);
-        bench_qmv_fast_codebook_typed::<B, f16>(c, &context, "NF4_F16_gs64", 64);
+        bench_qmv_lloyd_max_typed::<B, bf16>(c, &context, "LloydMax_BF16_gs64", 64);
+        bench_qmv_lloyd_max_typed::<B, f16>(c, &context, "LloydMax_F16_gs64", 64);
     });
 }

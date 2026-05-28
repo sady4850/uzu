@@ -494,7 +494,7 @@ impl<B: Backend> Embedding<B> {
                 let (zero_points, biases) = match quantization_method {
                     QuantizationMethod::ScaleZeroPoint => (Some(zero_points_or_biases), None),
                     QuantizationMethod::ScaleBias => (None, Some(zero_points_or_biases)),
-                    QuantizationMethod::Codebook => unreachable!("codebook embedding lookup is not implemented"),
+                    QuantizationMethod::LloydMax => unreachable!("Lloyd-Max embedding lookup is not implemented"),
                 };
                 lookup.encode(
                     token_ids,
@@ -605,7 +605,7 @@ impl<B: Backend> Embedding<B> {
                         mode: readout_config.mode,
                         group_size: readout_config.group_size,
                     },
-                    QuantizationMethod::Codebook => unreachable!("codebook embedding readout is not implemented"),
+                    QuantizationMethod::LloydMax => unreachable!("Lloyd-Max embedding readout is not implemented"),
                 };
                 readout
                     .borrow_mut()
@@ -720,9 +720,9 @@ fn load_quantized_embedding_parts<B: Backend>(
                 .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
                 .read_allocation()?
         },
-        QuantizationMethod::Codebook => {
+        QuantizationMethod::LloydMax => {
             return Err(EmbeddingError::UnsupportedConfiguration(
-                "codebook embedding loading is not implemented".to_string(),
+                "Lloyd-Max embedding loading is not implemented".to_string(),
             ));
         },
     };

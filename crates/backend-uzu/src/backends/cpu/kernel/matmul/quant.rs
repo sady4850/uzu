@@ -47,9 +47,9 @@ pub(crate) fn encode_quantized_gemm<TB: AsBufferRangeRef<Buffer: Buffer<Backend 
         MatmulB::FullPrecision {
             ..
         } => unreachable!(),
-        MatmulB::CodebookDequant {
+        MatmulB::LloydMaxDequant {
             ..
-        } => unreachable!("codebook GEMM is not implemented"),
+        } => unreachable!("Lloyd-Max GEMM is not implemented"),
     };
 
     let bits: usize = match mode {
@@ -140,7 +140,7 @@ fn run<T: ArrayElement + Float>(
     let (zp, bias) = match quant_method {
         QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias_ptr.as_ptr() as *const u8), None),
         QuantizationMethod::ScaleBias => (None, Some(zp_or_bias_ptr.as_ptr() as *const T)),
-        QuantizationMethod::Codebook => unreachable!("codebook GEMM is not implemented"),
+        QuantizationMethod::LloydMax => unreachable!("Lloyd-Max GEMM is not implemented"),
     };
     qmm_transposed::<T>(
         b_ptr.as_ptr() as *const u32,

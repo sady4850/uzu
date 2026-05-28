@@ -4,10 +4,10 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Buffer, Encoder,
+            AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
-                Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
+                Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQmvLloydMaxKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError},
             },
         },
@@ -32,6 +32,10 @@ pub(crate) struct QuantGemvKernel {
         QmvKey,
         <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel,
     >,
+    qmv_lloyd_max: HashMap<
+        QmvKey,
+        <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel,
+    >,
 }
 
 impl QuantGemvKernel {
@@ -43,6 +47,7 @@ impl QuantGemvKernel {
             data_type,
             qmv: HashMap::new(),
             qmv_fast: HashMap::new(),
+            qmv_lloyd_max: HashMap::new(),
         }
     }
 
@@ -83,10 +88,12 @@ impl QuantGemvKernel {
             ..
         } = arguments;
 
-        if let MatmulB::CodebookDequant {
+        if let MatmulB::LloydMaxDequant {
             b: weights,
             scales,
             codebook,
+            bias_indices,
+            bias_codebook,
             mode,
             group_size,
         } = b
@@ -97,59 +104,42 @@ impl QuantGemvKernel {
                     path: PATH,
                 });
             }
-
             let bits = match mode {
                 QuantizationMode::U4 => 4u32,
                 QuantizationMode::I8 | QuantizationMode::U8 => {
                     return Err(MatmulError::UnsupportedFeature {
-                        feature: "codebook QMV",
-                        reason: "only 4-bit codebook QMV is supported",
+                        feature: "Lloyd-Max QMV",
+                        reason: "only 4-bit Lloyd-Max QMV is supported",
                     });
                 },
             };
             if k % 512 != 0 || n % 32 != 0 {
                 return Err(MatmulError::UnsupportedFeature {
-                    feature: "codebook QMV",
+                    feature: "Lloyd-Max QMV",
                     reason: "requires k divisible by 512 and n divisible by 32",
                 });
             }
-
             let key = QmvKey {
                 group_size,
                 bits,
-                quant_method: QuantizationMethod::Codebook,
+                quant_method: QuantizationMethod::LloydMax,
                 use_hadamard: false,
             };
             let context = encoder.context();
-            let kernel = match self.qmv_fast.entry(key) {
+            let kernel = match self.qmv_lloyd_max.entry(key) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let kernel = <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                    let kernel = <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel::new(
                         context,
                         self.data_type,
                         group_size,
                         bits,
-                        QuantizationMethod::Codebook,
-                        false,
                     )
                     .map_err(MatmulError::BackendError)?;
                     entry.insert(kernel)
                 },
             };
-            kernel.encode(
-                weights,
-                scales,
-                None::<&Allocation<Metal>>,
-                None::<&Allocation<Metal>>,
-                Some(codebook),
-                (a, a_offset),
-                d,
-                None::<&Allocation<Metal>>,
-                k,
-                n,
-                m,
-                encoder,
-            );
+            kernel.encode(weights, scales, codebook, bias_indices, bias_codebook, (a, a_offset), d, k, n, m, encoder);
             return Ok(());
         }
 
@@ -171,9 +161,9 @@ impl QuantGemvKernel {
             MatmulB::FullPrecision {
                 ..
             } => panic!("QuantGemvKernel requires quantized B"),
-            MatmulB::CodebookDequant {
+            MatmulB::LloydMaxDequant {
                 ..
-            } => unreachable!(),
+            } => unreachable!("Lloyd-Max handled earlier"),
         };
 
         let bits = match mode {
@@ -185,7 +175,7 @@ impl QuantGemvKernel {
         let (zero_points, biases) = match method {
             QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
             QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
-            QuantizationMethod::Codebook => unreachable!(),
+            QuantizationMethod::LloydMax => unreachable!(),
         };
 
         if use_fast {
@@ -211,20 +201,7 @@ impl QuantGemvKernel {
                     entry.insert(kernel)
                 },
             };
-            kernel.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                None::<&Allocation<Metal>>,
-                (a, a_offset),
-                d,
-                hadamard_factors,
-                k,
-                n,
-                m,
-                encoder,
-            );
+            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, hadamard_factors, k, n, m, encoder);
         } else {
             if hadamard_factors.is_some() {
                 return Err(MatmulError::UnsupportedDOp {

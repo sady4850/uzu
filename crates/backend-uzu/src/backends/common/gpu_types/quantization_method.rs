@@ -9,8 +9,8 @@ pub enum QuantizationMethod {
     ScaleBias,
     #[serde(rename = "awq")]
     ScaleZeroPoint,
-    #[serde(rename = "codebook")]
-    Codebook,
+    #[serde(rename = "lloyd_max")]
+    LloydMax,
 }
 
 impl fmt::Display for QuantizationMethod {

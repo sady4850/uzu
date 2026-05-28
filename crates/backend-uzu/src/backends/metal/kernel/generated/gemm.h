@@ -9,7 +9,7 @@ enum class GemmWeightPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,
   ScaleZeroPointDequant = 2,
-  CodebookDequant = 3,
+  LloydMaxDequant = 3,
 };
 
 struct GemmDTransform {

@@ -16,7 +16,6 @@ pub fn qmv<T: ArrayElement + Float>(
     scales: *const T,
     zero_points: Option<*const u8>,
     biases: Option<*const T>,
-    codebook: Option<*const f16>,
     input: *const T,
     output: *mut T,
     in_vec_size: usize,
@@ -86,10 +85,8 @@ pub fn qmv<T: ArrayElement + Float>(
                             let bias = (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap();
                             scale * val_q as f32 + bias
                         },
-                        QuantizationMethod::Codebook => {
-                            let codebook_value =
-                                (*codebook.expect("Codebook quantized QMV requires a codebook").add(val_q)).to_f32();
-                            scale * codebook_value
+                        QuantizationMethod::LloydMax => {
+                            unreachable!("Lloyd-Max QMV uses qmv_lloyd_max")
                         },
                     };
 
@@ -123,7 +120,6 @@ pub fn quantized_matmul_qmv<T: ArrayElement + Float, const GROUP_SIZE: u32, cons
         scales,
         zero_points,
         biases,
-        None,
         input,
         output,
         in_vec_size as usize,

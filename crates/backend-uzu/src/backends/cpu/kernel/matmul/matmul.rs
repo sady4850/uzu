@@ -7,7 +7,8 @@ use crate::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
             gpu_types::{HadamardTransformOrder, QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
-                HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, TensorAddBiasKernel,
+                HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
+                QuantizedMatmulQmvLloydMaxKernel, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
@@ -62,7 +63,7 @@ impl MatmulKernel for MatmulCpuKernel {
             | MatmulB::ScaleZeroPointDequant {
                 ..
             }
-            | MatmulB::CodebookDequant {
+            | MatmulB::LloydMaxDequant {
                 ..
             } => Ok(self.encode_quant(arguments, encoder)?),
         }
@@ -234,7 +235,7 @@ impl MatmulCpuKernel {
                 group_size,
                 ..
             }
-            | MatmulB::CodebookDequant {
+            | MatmulB::LloydMaxDequant {
                 group_size,
                 ..
             } => group_size,
@@ -249,13 +250,19 @@ impl MatmulCpuKernel {
         let post_rht = arguments.d_transform.rht_factors;
         let post_bias = arguments.d_transform.bias;
 
-        if matches!(arguments.b, MatmulB::CodebookDequant { .. }) && arguments.m >= 5 {
-            return Err(MatmulError::UnsupportedFeature {
-                feature: "codebook GEMM",
-                reason: "codebook GEMM is not implemented",
-            });
+        if arguments.m >= 5 {
+            match arguments.b {
+                MatmulB::LloydMaxDequant {
+                    ..
+                } => {
+                    return Err(MatmulError::UnsupportedFeature {
+                        feature: "Lloyd-Max GEMM",
+                        reason: "Lloyd-Max GEMM is not implemented",
+                    });
+                },
+                _ => {},
+            }
         }
-
         if arguments.m >= 5 && arguments.n > 1 {
             assert!(
                 !(post_bias.is_some() && post_rht.is_some()),
@@ -331,10 +338,12 @@ impl MatmulCpuKernel {
             MatmulB::FullPrecision {
                 ..
             } => unreachable!(),
-            MatmulB::CodebookDequant {
+            MatmulB::LloydMaxDequant {
                 b: weights,
                 scales,
                 codebook,
+                bias_indices,
+                bias_codebook,
                 mode,
                 group_size,
             } => {
@@ -348,36 +357,32 @@ impl MatmulCpuKernel {
                     QuantizationMode::U4 => 4u32,
                     QuantizationMode::I8 | QuantizationMode::U8 => {
                         return Err(MatmulError::UnsupportedFeature {
-                            feature: "codebook QMV",
-                            reason: "only 4-bit codebook QMV is supported",
+                            feature: "Lloyd-Max QMV",
+                            reason: "only 4-bit Lloyd-Max QMV is supported",
                         });
                     },
                 };
                 if k % 512 != 0 || n % 32 != 0 {
                     return Err(MatmulError::UnsupportedFeature {
-                        feature: "codebook QMV",
+                        feature: "Lloyd-Max QMV",
                         reason: "requires k divisible by 512 and n divisible by 32",
                     });
                 }
-                let kernel =
-                    <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
-                        encoder.context(),
-                        self.data_type,
-                        group_size,
-                        bits,
-                        QuantizationMethod::Codebook,
-                        false,
-                    )
-                    .map_err(MatmulError::BackendError)?;
+                let kernel = <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel::new(
+                    encoder.context(),
+                    self.data_type,
+                    group_size,
+                    bits,
+                )
+                .map_err(MatmulError::BackendError)?;
                 kernel.encode(
                     weights,
                     scales,
-                    None::<&Allocation<Cpu>>,
-                    None::<&Allocation<Cpu>>,
-                    Some(codebook),
+                    codebook,
+                    bias_indices,
+                    bias_codebook,
                     (a, a_offset),
                     &mut *d,
-                    None::<&Allocation<Cpu>>,
                     k,
                     n,
                     m,
@@ -398,7 +403,7 @@ impl MatmulCpuKernel {
         let (zero_points, biases) = match method {
             QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
             QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
-            QuantizationMethod::Codebook => unreachable!(),
+            QuantizationMethod::LloydMax => unreachable!(),
         };
 
         let context = encoder.context();
@@ -418,7 +423,6 @@ impl MatmulCpuKernel {
                 scales,
                 zero_points,
                 biases,
-                None::<&Allocation<Cpu>>,
                 (a, a_offset),
                 &mut *d,
                 hadamard_factors,

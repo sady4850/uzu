@@ -2,8 +2,8 @@
 #[path = "../../../common/mod.rs"]
 mod common;
 
-mod qmv_fast_codebook_test;
 mod qmv_fast_test;
+mod qmv_lloyd_max_test;
 mod qmv_test;
 
 use backend_uzu::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
